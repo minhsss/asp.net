@@ -1,0 +1,28 @@
+https://stackoverflow.com/questions/5248183/html-partial-vs-html-renderpartial-html-action-vs-html-renderaction
+
+In ASP.NET MVC, what is the difference between:
+
+Html.Partial and Html.RenderPartial
+Html.Action and Html.RenderAction
+
+
+Html.Partial returns a String. Html.RenderPartial calls Write internally and returns void.
+
+The basic usage is:
+
+// Razor syntax
+@Html.Partial("ViewName")
+@{ Html.RenderPartial("ViewName");  }
+
+// WebView syntax
+<%: Html.Partial("ViewName") %>
+<% Html.RenderPartial("ViewName"); %>
+In the snippet above, both calls will yield the same result.
+
+While one can store the output of Html.Partial in a variable or return it from a method, one cannot do this with Html.RenderPartial.
+The result will be written to the Response stream during execution/evaluation.
+
+This also applies to Html.Action and Html.RenderAction.
+
+
+
