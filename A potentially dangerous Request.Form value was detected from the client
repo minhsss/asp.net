@@ -1,0 +1,262 @@
+https://stackoverflow.com/questions/81991/a-potentially-dangerous-request-form-value-was-detected-from-the-client
+
+
+Every time a user posts something containing < or > in a page in my web application, I get this exception thrown.
+
+I don't want to go into the discussion about the smartness of throwing an exception or crashing an entire web application because 
+somebody entered a character in a text box, but I am looking for an elegant way to handle this.
+
+Trapping the exception and showing
+
+An error has occurred please go back and re-type your entire form again, but this time please do not use <
+
+doesn't seem professional enough to me.
+
+Disabling post validation (validateRequest="false") will definitely avoid this error, 
+but it will leave the page vulnerable to a number of attacks.
+
+Ideally: When a post back occurs containing HTML restricted characters,
+that posted value in the Form collection will be automatically HTML encoded. So the .
+Text property of my text-box will be something & lt; html & gt;
+
+Is there a way I can do this from a handler?
+
+
+
+
+I think you are attacking it from the wrong angle by trying to encode all posted data.
+
+Note that a "<" could also come from other outside sources, like a database field, a configuration, a file, a feed and so on.
+
+Furthermore, "<" is not inherently dangerous. It's only dangerous in a specific context: 
+when writing strings that haven't been encoded to HTML output (because of XSS).
+
+In other contexts different sub-strings are dangerous, for example, if you write an user-provided URL into a link,
+the sub-string "javascript:" may be dangerous. 
+The single quote character on the other hand is dangerous when interpolating strings in SQL queries, 
+but perfectly safe if it is a part of a name submitted from a form or read from a database field.
+
+The bottom line is: you can't filter random input for dangerous characters, 
+because any character may be dangerous under the right circumstances. 
+You should encode at the point where some specific characters may become dangerous because they cross into a 
+different sub-language where they have special meaning. When you write a string to HTML, 
+you should encode characters that have special meaning in HTML, using Server.HtmlEncode.
+If you pass a string to a dynamic SQL statement, you should encode different characters 
+(or better, let the framework do it for you by using prepared statements or the like)..
+
+When you are sure you HTML-encode everywhere you pass strings to HTML, 
+then set validateRequest="false" in the <%@ Page ... %> directive in your .aspx file(s).
+
+In .NET 4 you may need to do a little more. Sometimes it's necessary to also
+add <httpRuntime requestValidationMode="2.0" /> to web.config
+
+To those coming in late: validateRequest="false" goes in the Page directive (first line of your .aspx file)
+
+Tip: Put <httpRuntime requestValidationMode="2.0" /> in a location tag to avoid killing the useful protection provided 
+by validation from the rest of your site. 
+
+In MVC3, this is [AllowHtml] on the model property. – Jeremy Holovacs Sep 9 '11 at 19:30
+
+To disable it globally for MVC 3 you also need GlobalFilters.Filters.Add(new ValidateInputAttribute(false));
+in Application_Start()
+
+@MGOwen you can also add the page directive to the web.config via <pages validateRequest="false" /> in <system.web />.
+Doing so will apply the property to all pages.
+
+
+There's a different solution to this error if you're using ASP.NET MVC:
+[HttpPost, ValidateInput(false)]
+public ActionResult Edit(FormCollection collection)
+{
+    // ...
+}
+
+In ASP.NET MVC (starting in version 3), you can add the AllowHtml attribute to a property on your model.
+
+It allows a request to include HTML markup during model binding by skipping request validation for the property.
+
+[AllowHtml]
+public string Description { get; set; }
+
+
+If you are on .NET 4.0 make sure you add this in your web.config file inside the <system.web> tags:
+
+<httpRuntime requestValidationMode="2.0" />
+In .NET 2.0, request validation only applied to aspx requests.
+In .NET 4.0 this was expanded to include all requests. 
+You can revert to only performing XSS validation when processing .aspx by specifying:
+
+requestValidationMode="2.0"
+You can disable request validate entirely by specifying:
+
+validateRequest="false"
+
+For ASP.NET 4.0, you can allow markup as input for specific pages instead of the whole site by putting it all in a <location> element. 
+This will make sure all your other pages are safe. You do NOT need to put ValidateRequest="false" in your .aspx page.
+
+<configuration>
+...
+  <location path="MyFolder/.aspx">
+    <system.web>
+      <pages validateRequest="false" />
+      <httpRuntime requestValidationMode="2.0" />
+    </system.web>
+  </location>
+...
+</configuration>
+
+
+
+The previous answers are great, but nobody said how to exclude a single field from being validated for HTML/JavaScript injections. 
+I don't know about previous versions, but in MVC3 Beta you can do this:
+
+[HttpPost, ValidateInput(true, Exclude = "YourFieldName")]
+public virtual ActionResult Edit(int id, FormCollection collection)
+{
+    ...
+}
+This still validates all the fields except for the excluded one.
+The nice thing about this is that your validation attributes still validate the field,
+but you just don't get the "A potentially dangerous Request.Form value was detected from the client" exceptions.
+
+I've used this for validating a regular expression. 
+I've made my own ValidationAttribute to see if the regular expression is valid or not. 
+As regular expressions can contain something that looks like a script I applied the above code 
+- the regular expression is still being checked if it's valid or not, but not if it contains scripts or HTML.
+
+
+In ASP.NET MVC you need to set requestValidationMode="2.0" and validateRequest="false" in web.config, 
+and apply a ValidateInput attribute to your controller action:
+
+<httpRuntime requestValidationMode="2.0"/>
+
+<configuration>
+    <system.web>
+        <pages validateRequest="false" />
+    </system.web>
+</configuration>
+and
+
+[Post, ValidateInput(false)]
+public ActionResult Edit(string message) {
+    ...
+}
+
+You can catch that error in Global.asax. I still want to validate, but show an appropriate message.
+On the blog listed below, a sample like this was available.
+
+    void Application_Error(object sender, EventArgs e)
+    {
+        Exception ex = Server.GetLastError();
+
+        if (ex is HttpRequestValidationException)
+        {
+            Response.Clear();
+            Response.StatusCode = 200;
+            Response.Write(@"[html]");
+            Response.End();
+        }
+    }
+
+
+Please bear in mind that some .NET controls will automatically HTML encode the output. For instance, setting the .Text property on a TextBox control will automatically encode it. That specifically means converting < into &lt;, > into &gt; and & into &amp;. So be wary of doing this...
+
+myTextBox.Text = Server.HtmlEncode(myStringFromDatabase); // Pseudo code
+However, the .Text property for HyperLink, Literal and Label won't HTML encode things,
+so wrapping Server.HtmlEncode(); 
+around anything being set on these properties is a must 
+if you want to prevent <script> window.location = "http://www.google.com"; </script>
+from being output into your page and subsequently executed.
+
+In the web.config file, within the tags, insert the httpRuntime element with the attribute requestValidationMode="2.0". 
+Also add the validateRequest="false" attribute in the pages element.
+
+Example:
+
+<configuration>
+  <system.web>
+   <httpRuntime requestValidationMode="2.0" />
+  </system.web>
+  <pages validateRequest="false">
+  </pages>
+</configuration>
+
+
+If you don't want to disable ValidateRequest you need to implement a JavaScript function in order to avoid the exception. 
+It is not the best option, but it works.
+
+function AlphanumericValidation(evt)
+{
+    var charCode = (evt.charCode) ? evt.charCode : ((evt.keyCode) ? evt.keyCode :
+        ((evt.which) ? evt.which : 0));
+
+    // User type Enter key
+    if (charCode == 13)
+    {
+        // Do something, set controls focus or do anything
+        return false;
+    }
+
+    // User can not type non alphanumeric characters
+    if ( (charCode <  48)                     ||
+         (charCode > 122)                     ||
+         ((charCode > 57) && (charCode < 65)) ||
+         ((charCode > 90) && (charCode < 97))
+       )
+    {
+        // Show a message or do something
+        return false;
+    }
+}
+Then in code behind, on the PageLoad event, add the attribute to your control with the next code:
+
+Me.TextBox1.Attributes.Add("OnKeyPress", "return AlphanumericValidation(event);")
+
+
+If you're using framework 4.0 then the entry in the web.config (<pages validateRequest="false" />)
+
+<configuration>
+    <system.web>
+        <pages validateRequest="false" />
+    </system.web>
+</configuration>
+If you're using framework 4.5 then the entry in the web.config (requestValidationMode="2.0")
+
+<system.web>
+    <compilation debug="true" targetFramework="4.5" />
+    <httpRuntime targetFramework="4.5" requestValidationMode="2.0"/>
+</system.web>
+If you want for only single page then, In you aspx file you should put the first line as this :
+
+<%@ Page EnableEventValidation="false" %>
+if you already have something like <%@ Page so just add the rest => EnableEventValidation="false" %>
+
+
+I ended up using JavaScript before each postback to check for the characters you didn't want, such as:
+
+<asp:Button runat="server" ID="saveButton" Text="Save" CssClass="saveButton" OnClientClick="return checkFields()" />
+
+function checkFields() {
+    var tbs = new Array();
+    tbs = document.getElementsByTagName("input");
+    var isValid = true;
+    for (i=0; i<tbs.length; i++) {
+        if (tbs(i).type == 'text') {
+            if (tbs(i).value.indexOf('<') != -1 || tbs(i).value.indexOf('>') != -1) {
+                alert('<> symbols not allowed.');
+                isValid = false;
+            }
+        }
+    }
+    return isValid;
+}
+
+
+
+
+
+
+
+
+
+
